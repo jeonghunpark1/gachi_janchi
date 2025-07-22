@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
@@ -63,12 +64,10 @@ class _FindIdScreenState extends State<FindIdScreen> {
   void dispose() {
     timer?.cancel(); // 화면 종료 시 타이머 취소
 
-    // TextEditingController dispose
     nameController.dispose();
     emailController.dispose();
     codeController.dispose();
 
-    // FocusNode dispose
     nameFocus.dispose();
     emailFocus.dispose();
     codeFocus.dispose();
@@ -78,8 +77,8 @@ class _FindIdScreenState extends State<FindIdScreen> {
 
   void checkFormValid() {
     setState(() {
-      isEmailValid = CheckValidate().validateEmail(emailController.text) == null;
-      isCodeValid = CheckValidate().validateCode(codeController.text) == null && (remainingTime > 0 && remainingTime < 180);
+      isEmailValid = checkValidate().validateEmail(emailController.text) == null;
+      isCodeValid = checkValidate().validateCode(codeController.text) == null && (remainingTime > 0 && remainingTime < 180);
     });
   }
 
@@ -101,6 +100,8 @@ class _FindIdScreenState extends State<FindIdScreen> {
         }
       );
 
+      log("response data = ${response.toString()}");
+
       if (response.statusCode == 200) {
         startTimer();
         // 인증번호 메일 보내기 성공 처리
@@ -119,6 +120,10 @@ class _FindIdScreenState extends State<FindIdScreen> {
       }
     } catch (e) {
       // 예외 처리
+      if (e is DioError) {
+        log("${e.response?.toString()}");
+      }
+
       showDialog(
         context: context,
         builder: (_) => const AlertDialog(
@@ -137,7 +142,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
 
     // .env에서 서버 URL 가져오기
     final apiAddress = Uri.parse("${dotenv.get("API_ADDRESS")}/api/auth/email/verify");
-
+    
     try {
       final response = await dio.post(
         apiAddress.toString(),
@@ -148,6 +153,8 @@ class _FindIdScreenState extends State<FindIdScreen> {
           headers: {'sessionId': sessionId}, // 세션 ID 헤더 추가
         )
       );
+
+      log("response data = ${response.toString()}");
 
       if(response.statusCode == 200) {
         // 인증번호 확인 성공 처리
@@ -160,6 +167,9 @@ class _FindIdScreenState extends State<FindIdScreen> {
       }
     } catch (e) {
       // 예외 처리
+      if (e is DioError) {
+        log("${e.response?.toString()}");
+      }
       showDialog(
         context: context,
         builder: (_) => const AlertDialog(
@@ -213,10 +223,14 @@ class _FindIdScreenState extends State<FindIdScreen> {
         headers: headers
       );
 
+      log("response data = ${utf8.decode(response.bodyBytes)}");
+
       if (response.statusCode == 200) {
         print("아이디 찾기 요청 완료");
         
         final data = json.decode(response.body);
+        log("response data: $data");
+        
         String findId = data['id'];
 
         print("find id: ${findId}");
@@ -237,6 +251,9 @@ class _FindIdScreenState extends State<FindIdScreen> {
       }
     } catch (e) {
       // 예외 처리
+      if (e is DioError) {
+        log("${e.response?.toString()}");
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("네트워크 오류: ${e.toString()}"))
       );
@@ -307,7 +324,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                                           keyboardType: TextInputType.text,
                                           autovalidateMode: AutovalidateMode.onUserInteraction,
                                           validator: (value) {
-                                            return CheckValidate().validateName(value);
+                                            return checkValidate().validateName(value);
                                           },
                                           decoration: const InputDecoration(
                                             hintText: "이름을 입력해주세요."
@@ -340,7 +357,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                                                 },
                                                 autovalidateMode: AutovalidateMode.onUserInteraction,
                                                 validator: (value) {
-                                                  return CheckValidate().validateEmail(value);
+                                                  return checkValidate().validateEmail(value);
                                                 },
                                                 decoration: const InputDecoration(
                                                   hintText: "이메일을 입력해주세요."
@@ -412,7 +429,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                                                 }, // 입력할 때마다 인증번호 유효성 검사
                                                 autovalidateMode: AutovalidateMode.onUserInteraction,
                                                 validator: (value) {
-                                                  return CheckValidate().validateCode(value);
+                                                  return checkValidate().validateCode(value);
                                                 },
                                                 decoration: const InputDecoration(
                                                   hintText: "인증번호를 입력해주세요."

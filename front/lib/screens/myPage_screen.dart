@@ -1,4 +1,3 @@
-import 'package:flutter_naver_login/flutter_naver_login.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gachi_janchi/utils/favorite_provider.dart';
 import 'package:gachi_janchi/utils/serverRequest.dart';
@@ -12,7 +11,6 @@ import '../utils/secure_storage.dart';
 import 'login_screen.dart';
 import 'edit_nickname_screen.dart';
 import 'edit_title_screen.dart';
-import 'edit_name_screen.dart';
 import '../widgets/ProfileWidget.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -36,7 +34,6 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
   void initState() {
     super.initState();
     ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserInfo(isFinalRequest: isFinalRequest), context);
-    // _fetchUserInfo();
   }
 
   Future<bool> _fetchUserInfo({bool isFinalRequest = false}) async {
@@ -78,7 +75,7 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
       }
     } catch (e) {
       if (isFinalRequest) {
-        print("❌ [API 오류] $e");
+        print("[API 오류] $e");
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("오류 발생: $e")));
       }
@@ -97,7 +94,7 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
       Map<String, dynamic> payloadMap = json.decode(decoded);
       return payloadMap["sub"] ?? "알 수 없음";
     } catch (e) {
-      print("❌ [토큰 파싱 오류] $e");
+      print("[토큰 파싱 오류] $e");
       return "알 수 없음";
     }
   }
@@ -142,11 +139,8 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
               MaterialPageRoute(builder: (context) => const EditTitleScreen()),
             );
             ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserInfo(isFinalRequest: isFinalRequest), context);
-            // _fetchUserInfo();
           }),
-          _buildListTile("이름", name,
-              onTap: () =>
-                  _navigateToEditScreen(EditnameScreen(currentValue: name))),
+          _buildListTile("이름", name),
           _buildListTile("이메일", email),
           if (loginType == "local")
             _buildListTile("비밀번호 변경", "",
@@ -159,11 +153,11 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
 
   Widget _buildListTile(String label, String value, {VoidCallback? onTap}) {
     return ListTile(
-      title: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      title: Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(value),
+          Text(value, style: const TextStyle(fontSize: 14)),
           if (onTap != null) const Icon(Icons.chevron_right),
         ],
       ),
@@ -212,7 +206,6 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
                 );
               },
             );
-            // _deleteAccount
           },
           child: const Text("회원탈퇴", style: TextStyle(color: Colors.red)),
         ),
@@ -228,7 +221,6 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
 
     if (result != null) {
       ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserInfo(isFinalRequest: isFinalRequest), context);
-      // _fetchUserInfo();
     }
   }
 
@@ -253,42 +245,6 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
   }
 
   Future<bool> _deleteAccount({bool isFinalRequest = false}) async {
-    // bool? confirmDelete = await showDialog(
-    //   context: context,
-    //   builder: (BuildContext context) {
-    //     return AlertDialog(
-    //       title: const Text("회원 탈퇴"),
-    //       content: Column(
-    //         mainAxisSize: MainAxisSize.min,
-    //         children: [
-    //           const Text("정말로 회원 탈퇴를 진행하시겠습니까? 이 작업은 되돌릴 수 없습니다."),
-    //           const SizedBox(height: 10),
-    //           TextField(
-    //             controller: _reasonController,
-    //             decoration: const InputDecoration(
-    //               hintText: "탈퇴 사유를 입력해주세요. (선택 사항)",
-    //             ),
-    //           ),
-    //         ],
-    //       ),
-    //       actions: [
-    //         TextButton(
-    //           onPressed: () => Navigator.of(context).pop(false),
-    //           child: const Text("취소"),
-    //         ),
-    //         TextButton(
-    //           onPressed: () => Navigator.of(context).pop(true),
-    //           child: const Text("탈퇴"),
-    //         ),
-    //       ],
-    //     );
-    //   },
-    // );
-
-    // if (confirmDelete != true) {
-    //   return false;
-    // }
-
     String? accessToken = await SecureStorage.getAccessToken();
     if (accessToken == null) {
       ScaffoldMessenger.of(context)
@@ -303,16 +259,13 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
       await dio.delete("${dotenv.get("API_ADDRESS")}/api/user",
           data: {"reason": _reasonController.text});
 
-      // await SecureStorage.deleteTokens();
-      // Navigator.pushReplacement(context,
-      //     MaterialPageRoute(builder: (context) => const LoginScreen()));
       _logout();
       
       print("탈퇴 성공");
       return true;
     } catch (e) {
       if (isFinalRequest) {
-        print("❌ [API 오류] $e");
+        print("[API 오류] $e");
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("오류 발생: $e")));
       }
@@ -335,14 +288,15 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text("프로필 선택", style: TextStyle(fontSize: 20)),
+                const Text("프로필 선택", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 20),
                 ElevatedButton.icon(
-                  icon: const Icon(Icons.image, color: Colors.purple),
+                  icon: const Icon(Icons.image, color: Colors.white),
                   label: const Text("갤러리에서 선택",
-                      style: TextStyle(color: Colors.purple)),
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
+                    backgroundColor: const Color.fromRGBO(122, 11, 11, 1),
+                    foregroundColor: Colors.white,
                     shadowColor: Colors.black12,
                     elevation: 4,
                     padding: const EdgeInsets.symmetric(
@@ -358,17 +312,17 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
                         await picker.pickImage(source: ImageSource.gallery);
                     if (pickedFile != null) {
                       await ServerRequest().serverRequest(({bool isFinalRequest = false}) => _uploadImage(pickedFile.path), context);
-                      // await _uploadImage(pickedFile.path);
                     }
                   },
                 ),
                 const SizedBox(height: 20),
                 ElevatedButton.icon(
-                  icon: const Icon(Icons.person, color: Colors.purple),
+                  icon: const Icon(Icons.person, color: Colors.white),
                   label: const Text("기본 이미지 선택",
-                      style: TextStyle(color: Colors.purple)),
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
+                    backgroundColor: const Color.fromRGBO(122, 11, 11, 1),
+                    foregroundColor: Colors.white,
                     shadowColor: Colors.black12,
                     elevation: 4,
                     padding: const EdgeInsets.symmetric(
@@ -380,7 +334,6 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
                   onPressed: () async {
                     Navigator.pop(context);
                     await ServerRequest().serverRequest(({bool isFinalRequest = false}) => _resetToDefaultImage(isFinalRequest: isFinalRequest), context);
-                    // await _resetToDefaultImage();
                   },
                 ),
               ],
@@ -424,7 +377,6 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
 
       if (response.statusCode == 200) {
         await ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserInfo(isFinalRequest: isFinalRequest), context); // 변경 직후 갱신 추가
-        // await _fetchUserInfo(); // ✅ 변경 직후 갱신 추가
         if (!mounted) return false;
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text("프로필 이미지가 변경되었습니다.")));
@@ -474,7 +426,7 @@ class _MypageScreenState extends ConsumerState<MypageScreen> {
       }
     } catch (e) {
       if (isFinalRequest) {
-        print("❌ [기본 이미지 설정 실패] $e");
+        print("[기본 이미지 설정 실패] $e");
         ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text("기본 이미지 설정 실패: $e")));
       }

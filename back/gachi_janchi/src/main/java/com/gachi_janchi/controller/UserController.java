@@ -1,13 +1,13 @@
 package com.gachi_janchi.controller;
 
 import com.gachi_janchi.dto.*;
-import com.gachi_janchi.repository.UserRepository;
 import com.gachi_janchi.service.FavoriteRestaurantService;
 import com.gachi_janchi.service.TokenService;
 import com.gachi_janchi.service.UserService;
 import com.gachi_janchi.service.VisitedRestaurantService;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
@@ -31,8 +31,6 @@ public class UserController {
   @Autowired
   private VisitedRestaurantService visitedRestaurantService;
 
-  @Autowired
-  private UserRepository userRepository;
   @GetMapping("/info")
   public ResponseEntity<UserResponse> getUserInfo(@RequestHeader("Authorization") String accessToken) {
     return ResponseEntity.ok(userService.getUserInfo(accessToken));
@@ -167,13 +165,30 @@ public class UserController {
   }
 
   // UserController.java
+//  @GetMapping("/ranking")
+//  public ResponseEntity<List<RankingUserResponse>> getRanking(
+//          @RequestParam(name = "page", defaultValue = "0") int page,
+//          @RequestParam(name = "size", defaultValue = "10") int size) {
+//    System.out.println("📥 /api/user/ranking 호출됨 - page: " + page + ", size: " + size);
+//    Pageable pageable = PageRequest.of(page, size);
+//    return ResponseEntity.ok(userService.getRanking(pageable));
+//  }
+
   @GetMapping("/ranking")
-  public ResponseEntity<List<RankingUserResponse>> getRanking(
-          @RequestParam(name = "page", defaultValue = "0") int page,
-          @RequestParam(name = "size", defaultValue = "10") int size) {
-    System.out.println("📥 /api/user/ranking 호출됨 - page: " + page + ", size: " + size);
+  public ResponseEntity<PageResponse<RankingUserInfo>> getRanking(
+    @RequestParam(name = "page", defaultValue = "0") int page,
+    @RequestParam(name = "size", defaultValue = "10") int size) {
+
     Pageable pageable = PageRequest.of(page, size);
-    return ResponseEntity.ok(userService.getRanking(pageable));
+    Page<RankingUserInfo> rankingUserInfoPage = userService.getRanking(pageable);
+
+    return ResponseEntity.ok(new PageResponse<>(
+      rankingUserInfoPage.getContent(),
+      rankingUserInfoPage.getTotalPages(),
+      rankingUserInfoPage.getTotalElements(),
+      rankingUserInfoPage.getNumber(),
+      rankingUserInfoPage.getSize()
+    ));
   }
 
   // 방문한 음식점 저장 엔드포인트

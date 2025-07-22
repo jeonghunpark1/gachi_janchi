@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
@@ -66,7 +67,6 @@ class _FindPasswordState extends State<FindPasswordScreen> {
     timer?.cancel(); // 화면 종료 시 타이머 취소
     super.dispose();
 
-    // TextEditingController dispose
     nameController.dispose();
     idController.dispose();
     emailController.dispose();
@@ -81,7 +81,7 @@ class _FindPasswordState extends State<FindPasswordScreen> {
 
   // 이메일 상태를 개별적으로 검증하는 함수
   void validateEmail(String email) {
-    final isValid = CheckValidate().validateEmail(email) == null;
+    final isValid = checkValidate().validateEmail(email) == null;
     setState(() {
       isEmailValid = isValid;
     });
@@ -101,6 +101,8 @@ class _FindPasswordState extends State<FindPasswordScreen> {
       final response = await dio.post(apiAddress.toString(),
           data: {'email': email, 'type': 'password'});
 
+      log("response data = ${response.toString()}");
+
       if (response.statusCode == 200) {
         startTimer();
         // 인증번호 메일 보내기 성공 처리
@@ -119,6 +121,9 @@ class _FindPasswordState extends State<FindPasswordScreen> {
       }
     } catch (e) {
       // 예외 처리
+      if (e is DioError) {
+        log("${e.response?.toString()}");
+      }
       showDialog(
           context: context,
           builder: (_) => const AlertDialog(
@@ -145,6 +150,8 @@ class _FindPasswordState extends State<FindPasswordScreen> {
             headers: {'sessionId': sessionId}, // 세션 ID 헤더 추가
           ));
 
+      log("response data = ${response.toString()}");
+
       if (response.statusCode == 200) {
         // 인증번호 확인 성공 처리
         print("인증번호 확인 성공");
@@ -156,6 +163,9 @@ class _FindPasswordState extends State<FindPasswordScreen> {
       }
     } catch (e) {
       // 예외 처리
+      if (e is DioError) {
+        log("${e.response?.toString()}");
+      }
       showDialog(
           context: context,
           builder: (_) => const AlertDialog(
@@ -167,7 +177,7 @@ class _FindPasswordState extends State<FindPasswordScreen> {
 
   // 인증번호 상태를 개별적으로 검증하는 함수
   void validateCode(String code) {
-    final isValid = CheckValidate().validateCode(code) == null &&
+    final isValid = checkValidate().validateCode(code) == null &&
         (remainingTime > 0 && remainingTime < 180);
     setState(() {
       isCodeValid = isValid;
@@ -217,6 +227,8 @@ class _FindPasswordState extends State<FindPasswordScreen> {
         apiAddress,
         headers: headers,
       );
+
+      log("response data = ${utf8.decode(response.bodyBytes)}");
 
       if (response.statusCode == 200) {
         // 비밀번호 찾기 성공 처리
@@ -325,8 +337,38 @@ class _FindPasswordState extends State<FindPasswordScreen> {
                                           autovalidateMode: AutovalidateMode
                                               .onUserInteraction,
                                           validator: (value) {
-                                            return CheckValidate()
+                                            return checkValidate()
                                                 .validateName(value);
+                                          },
+                                          decoration: const InputDecoration(
+                                              hintText: "이름을 입력해주세요."),
+                                        )
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    // 이름 입력 부분
+                                    margin:
+                                        const EdgeInsets.fromLTRB(0, 0, 0, 20),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          "아이디 *",
+                                          style: TextStyle(
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                        TextFormField(
+                                          controller: idController,
+                                          focusNode: idFocus,
+                                          keyboardType: TextInputType.text,
+                                          autovalidateMode: AutovalidateMode
+                                              .onUserInteraction,
+                                          validator: (value) {
+                                            return checkValidate()
+                                                .validateId(value, true);
                                           },
                                           decoration: const InputDecoration(
                                               hintText: "이름을 입력해주세요."),
@@ -362,7 +404,7 @@ class _FindPasswordState extends State<FindPasswordScreen> {
                                                     AutovalidateMode
                                                         .onUserInteraction,
                                                 validator: (value) {
-                                                  return CheckValidate()
+                                                  return checkValidate()
                                                       .validateEmail(value);
                                                 },
                                                 decoration:
@@ -450,7 +492,7 @@ class _FindPasswordState extends State<FindPasswordScreen> {
                                                     AutovalidateMode
                                                         .onUserInteraction,
                                                 validator: (value) {
-                                                  return CheckValidate()
+                                                  return checkValidate()
                                                       .validateCode(value);
                                                 },
                                                 decoration:
@@ -508,6 +550,7 @@ class _FindPasswordState extends State<FindPasswordScreen> {
                           isCodeCheck
                       ? () {
                           print("비밀번호 찾기 버튼 클릭");
+                          findPassword();
                         }
                       : null,
                   style: ElevatedButton.styleFrom(

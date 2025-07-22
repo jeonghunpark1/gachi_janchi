@@ -3,9 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:gachi_janchi/utils/serverRequest.dart';
 import 'package:gachi_janchi/utils/translation.dart';
-import 'dart:math' as math;
 import '../utils/secure_storage.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class CollectionScreen extends StatefulWidget {
   const CollectionScreen({super.key});
@@ -43,18 +41,13 @@ class _CollectionScreenState extends State<CollectionScreen>
 
     _initializeUserInfo();
     ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserIngredients(isFinalRequest: isFinalRequest), context);
-    // _fetchUserIngredients();
     ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchCollections(isFinalRequest: isFinalRequest), context);
-    // _fetchCollections();
     ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserCollections(isFinalRequest: isFinalRequest), context);
-    // _fetchUserCollections();
   }
 
   Future<void> _initializeUserInfo() async {
     ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserData(isFinalRequest: isFinalRequest), context);
     ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserRanking(isFinalRequest: isFinalRequest), context);
-    // await _fetchUserData();
-    // await _fetchUserRanking();
   }
 
   @override
@@ -252,16 +245,20 @@ class _CollectionScreenState extends State<CollectionScreen>
         data: {"collectionName": name},
         options: Options(headers: {"Authorization": "Bearer $token"}),
       );
+
       if (res.statusCode == 200) {
         setState(() {
           completedCollections.add(name);
         });
         ServerRequest().serverRequest(({bool isFinalRequest = false}) => _fetchUserIngredients(isFinalRequest: isFinalRequest), context);
-        // await _fetchUserIngredients();
         print("컬렉션 완성 성공");
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("컬렉션 획득")));
         return true;
       } else {
         print("컬렉션 완성 실패");
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("컬렉션 획득 실패")));
         return false;
       }
     } catch (e) {
@@ -283,14 +280,45 @@ class _CollectionScreenState extends State<CollectionScreen>
         content: Text("‘${Translation.translateCollection(name)}’을(를) 완성할까요?"),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text("취소")),
+              onPressed: () => Navigator.pop(context), 
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5),
+                  side: BorderSide(
+                    width: 0.5
+                  )
+                )
+              ),
+              child: const Text(
+                "취소",
+                style: TextStyle(
+                  color: const Color.fromRGBO(122, 11, 11, 1),
+                ),
+              )
+          ),
           ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                ServerRequest().serverRequest(({bool isFinalRequest = false}) => _completeCollection(name, isFinalRequest: isFinalRequest), context);
-                // _completeCollection(name);
+              onPressed: () async{
+                final result = await ServerRequest().serverRequest(({bool isFinalRequest = false}) => _completeCollection(name, isFinalRequest: isFinalRequest), context);
+                if (result) {
+                  Navigator.pop(context);
+                }
               },
-              child: const Text("완성하기")),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color.fromRGBO(122, 11, 11, 1),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5)
+                )
+              ),
+              child: const Text(
+                "완성하기",
+                style: TextStyle(
+                  color: Colors.white
+                ),
+              )
+          ),
         ],
       ),
     );
@@ -419,39 +447,43 @@ class _CollectionScreenState extends State<CollectionScreen>
                                   ? Colors.grey[440]
                                   : Colors.white,
                               child: SizedBox(
-                                height: 600,
+                                height: 650,
                                 child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(
-                                          top: Radius.circular(12)),
-                                      child: Image.asset(
-                                        toAssetPath(name),
-                                        height: 120,
-                                        width: double.infinity,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) =>
-                                            const Icon(Icons.broken_image),
-                                      ),
+                                    Column(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: const BorderRadius.vertical(
+                                              top: Radius.circular(12)),
+                                          child: Image.asset(
+                                            toAssetPath(name),
+                                            height: 120,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) =>
+                                                const Icon(Icons.broken_image),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Text(Translation.translateCollection(name),
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16)),
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.symmetric(horizontal: 8),
+                                          child: Text(
+                                            description,
+                                            style: const TextStyle(
+                                                fontSize: 12, color: Colors.grey),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            textAlign: TextAlign.start,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(height: 5),
-                                    Text(Translation.translateCollection(name),
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16)),
-                                    Padding(
-                                      padding:
-                                          const EdgeInsets.symmetric(horizontal: 8),
-                                      child: Text(
-                                        description,
-                                        style: const TextStyle(
-                                            fontSize: 12, color: Colors.grey),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
                                     if (!isCompleted)
                                       Wrap(
                                         spacing: 8,
@@ -466,8 +498,8 @@ class _CollectionScreenState extends State<CollectionScreen>
                                             children: [
                                               Image.asset(
                                                 toIngredientAssetPath(ing),
-                                                width: 40,
-                                                height: 40,
+                                                width: 35,
+                                                height: 35,
                                                 errorBuilder: (_, __, ___) =>
                                                     const Icon(Icons.error),
                                               ),

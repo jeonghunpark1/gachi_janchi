@@ -1,18 +1,11 @@
 package com.gachi_janchi.controller;
 
+import com.gachi_janchi.dto.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.gachi_janchi.dto.AddReviewRequest;
-import com.gachi_janchi.dto.AddReviewResponse;
-import com.gachi_janchi.dto.DeleteReviewRequest;
-import com.gachi_janchi.dto.DeleteReviewResponse;
-import com.gachi_janchi.dto.GetReviewByRestaurantIdResponse;
-import com.gachi_janchi.dto.GetReviewByUserIdResponse;
-import com.gachi_janchi.dto.UpdateReviewRequest;
-import com.gachi_janchi.dto.UpdateReviewResponse;
 import com.gachi_janchi.service.ReviewService;
 
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -40,9 +33,21 @@ public class ReviewController {
   }
 
   @GetMapping("/restaurantId")
-  public ResponseEntity<GetReviewByRestaurantIdResponse> getReviewByRestaurantId(@RequestParam("restaurantId") String restaurantId, @RequestParam("sortType") String sortType, @RequestParam("onlyImage") boolean onlyImage) {
-    GetReviewByRestaurantIdResponse getReviewByRestaurantIdResponse = reviewService.getReviewByRestaurant(restaurantId, sortType, onlyImage);
+  public ResponseEntity<GetReviewByRestaurantIdResponse> getReviewByRestaurantId(
+    @RequestParam(name = "restaurantId") String restaurantId,
+    @RequestParam(name = "sortType") String sortType,
+    @RequestParam(name = "onlyImage") boolean onlyImage,
+    @RequestParam(name = "page", defaultValue = "0") int page,
+    @RequestParam(name = "size", defaultValue = "10") int size
+  ) {
+    GetReviewByRestaurantIdResponse getReviewByRestaurantIdResponse = reviewService.getReviewByRestaurant(restaurantId, sortType, onlyImage, page, size);
     return ResponseEntity.ok(getReviewByRestaurantIdResponse);
+  }
+
+  @GetMapping("/ratingStatus")
+  public ResponseEntity<ReviewRatingStatusResponse> getReviewRatingStatus(@RequestParam(name = "restaurantId") String restaurantId) {
+    ReviewRatingStatusResponse reviewRatingStatusResponse = reviewService.getReviewRatingStatus(restaurantId);
+    return ResponseEntity.ok(reviewRatingStatusResponse);
   }
 
   @GetMapping("/userId")

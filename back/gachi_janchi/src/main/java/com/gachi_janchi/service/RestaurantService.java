@@ -6,20 +6,27 @@ import com.gachi_janchi.dto.RestaurantDetailInfo;
 import com.gachi_janchi.dto.RestaurantDetailScreenResponse;
 import com.gachi_janchi.dto.RestaurantWithIngredientAndReviewCountDto;
 import com.gachi_janchi.dto.RestaurantsByBoundsResponse;
-import com.gachi_janchi.dto.RestaurantsByDongResponse;
 import com.gachi_janchi.dto.RestaurantsByKeywordResponse;
 import com.gachi_janchi.dto.ReviewCountAndAvg;
 import com.gachi_janchi.entity.Ingredient;
 import com.gachi_janchi.entity.Restaurant;
+import com.gachi_janchi.entity.RestaurantIngredient;
+import com.gachi_janchi.exception.CustomException;
+import com.gachi_janchi.exception.ErrorCode;
 import com.gachi_janchi.repository.RestaurantIngredientRepository;
 import com.gachi_janchi.repository.RestaurantRepository;
+import com.gachi_janchi.repository.RestaurantStatRepository;
 import com.gachi_janchi.repository.ReviewRepository;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -36,6 +43,12 @@ public class RestaurantService {
   @Autowired
   private ReviewRepository reviewRepository;
 
+  @Autowired
+  private RestaurantStatRepository restaurantStatRepository;
+
+  @Autowired
+  private RestaurantCacheService restaurantCacheService;
+
   // dong을 기준으로 Restaurant 찾기
   // public RestaurantsByDongResponse findRestaurantsByDong(String dong) {
   //   List<Restaurant> restaurants = restaurantRepository.findByAddress_Dong(dong);
@@ -44,11 +57,61 @@ public class RestaurantService {
 
   // 지도에 보이는 영역을 기준으로 Restaurant 찾기
   public RestaurantsByBoundsResponse findRestaurantsInBounds(double latMin, double latMax, double lonMin, double lonMax) {
+
+    long start = System.currentTimeMillis();
+
     List<Restaurant> restaurants = restaurantRepository.findByLocationLatitudeBetweenAndLocationLongitudeBetween(latMin, latMax, lonMin, lonMax);
 
-    List<RestaurantWithIngredientAndReviewCountDto> restaurantWithIngredientDtos = makeRestaurantWithIngredientDtos(restaurants);
+    List<String> restaurantIds = restaurants.stream()
+      .map(Restaurant::getId)
+      .toList();
 
-    return new RestaurantsByBoundsResponse(restaurantWithIngredientDtos);
+    // Redis에서 캐싱된 데이터 조회
+    List<RestaurantWithIngredientAndReviewCountDto> cachedData = restaurantCacheService.getRestaurants(restaurantIds);
+    Set<String> cachedIds = cachedData.stream()
+      .map(RestaurantWithIngredientAndReviewCountDto::getId)
+      .collect(Collectors.toSet());
+
+    // 캐싱되지 않은 ID 목록
+    List<String> missedIds = restaurantIds.stream()
+      .filter(id -> !cachedIds.contains(id))
+      .toList();
+
+    // 캐싱되지 않은 데이터 조회 및 가공
+    List<RestaurantWithIngredientAndReviewCountDto> missedData = new ArrayList<>();
+    if (!missedIds.isEmpty()) {
+      Map<String, ReviewCountAndAvg> reviewStatMap = restaurantStatRepository.findReviewStatsByRestaurantIds(missedIds).stream()
+        .collect(Collectors.toMap(ReviewCountAndAvg::getRestaurantId, Function.identity()));
+
+
+      Map<String, Ingredient> ingredientMap = restaurantIngredientRepository.findByRestaurantIdIn(missedIds).stream()
+        .collect(Collectors.toMap(RestaurantIngredient::getRestaurantId, RestaurantIngredient::getIngredient));
+
+      missedData = restaurants.stream()
+        .filter(restaurant -> missedIds.contains(restaurant.getId()))
+        .map(restaurant -> {
+          ReviewCountAndAvg stats = reviewStatMap.getOrDefault(restaurant.getId(), new ReviewCountAndAvg(restaurant.getId(), 0L, 0.0));
+          Ingredient ingredient = ingredientMap.get(restaurant.getId());
+          return RestaurantWithIngredientAndReviewCountDto.from(restaurant, ingredient, stats);
+        })
+        .toList();
+
+      // Redis에 캐시 저장
+      restaurantCacheService.cacheRestaurants(missedData);
+    }
+
+    // 캐시된 + 새로 조회한 데이터 통합 후 반환
+    List<RestaurantWithIngredientAndReviewCountDto> restaurantWithIngredientAndReviewCountDtos = new ArrayList<>();
+    restaurantWithIngredientAndReviewCountDtos.addAll(cachedData);
+    restaurantWithIngredientAndReviewCountDtos.addAll(missedData);
+
+    long end = System.currentTimeMillis();
+    System.out.println("getReviewByRestaurant 실행 시간: " + (end - start) + "ms");
+
+    System.out.println("Redis Data: " + cachedData.size());
+    System.out.println("New Data: " + missedData.size());
+
+    return new RestaurantsByBoundsResponse(restaurantWithIngredientAndReviewCountDtos);
   }
 
   // 검색어로 Restaurant 찾기
@@ -62,8 +125,12 @@ public class RestaurantService {
 
   // 음식점 id로 Restaurant 찾기
   public RestaurantDetailScreenResponse findRestaurantByRestaurantId(String restaurantId) {
-    Restaurant restaurant = restaurantRepository.findById(restaurantId).orElseThrow(() -> new IllegalArgumentException("음식점을 찾을 수 없습니다. - " + restaurantId));
+    Restaurant restaurant = restaurantRepository.findById(restaurantId)
+      // .orElseThrow(() -> new IllegalArgumentException("음식점을 찾을 수 없습니다. - " + restaurantId));
+      .orElseThrow(() -> new CustomException(ErrorCode.RESTAURANT_NOT_FOUND));
+
     ReviewCountAndAvg reviewCountAndAvg = new ReviewCountAndAvg(
+      restaurantId,
       reviewRepository.countByRestaurantId(restaurant.getId()),
       reviewRepository.findAverageRatingByRestaurantId(restaurant.getId())
     );
@@ -100,6 +167,7 @@ public class RestaurantService {
     return restaurants.stream()
             .map(restaurant -> {
               ReviewCountAndAvg reviewCountAndAvg = new ReviewCountAndAvg(
+                restaurant.getId(),
                 reviewRepository.countByRestaurantId(restaurant.getId()),
                 reviewRepository.findAverageRatingByRestaurantId(restaurant.getId())
               );
@@ -112,7 +180,9 @@ public class RestaurantService {
 
   // 음식점 아이디로 메뉴 반환해주는 함수
   public GetRestaurantMenuResponse getRestaurantMenuByRestaurantId(String restaurantId) {
-    Restaurant restaurant = restaurantRepository.findById(restaurantId).orElseThrow(() -> new IllegalArgumentException("음식점을 찾을 수 없습니다. - " + restaurantId));
+    Restaurant restaurant = restaurantRepository.findById(restaurantId)
+      // .orElseThrow(() -> new IllegalArgumentException("음식점을 찾을 수 없습니다. - " + restaurantId));
+      .orElseThrow(() -> new CustomException(ErrorCode.RESTAURANT_NOT_FOUND));
     return new GetRestaurantMenuResponse(restaurant.getMenu());
   }
 }

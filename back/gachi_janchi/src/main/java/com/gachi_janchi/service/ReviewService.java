@@ -3,36 +3,30 @@ package com.gachi_janchi.service;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import com.gachi_janchi.dto.*;
+import com.gachi_janchi.event.ReviewUpdateEvent;
+import com.gachi_janchi.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.gachi_janchi.dto.AddReviewRequest;
-import com.gachi_janchi.dto.AddReviewResponse;
-import com.gachi_janchi.dto.DeleteReviewRequest;
-import com.gachi_janchi.dto.DeleteReviewResponse;
-import com.gachi_janchi.dto.GetReviewByRestaurantIdResponse;
-import com.gachi_janchi.dto.GetReviewByUserIdResponse;
-import com.gachi_janchi.dto.ReviewWithImageAndMenu;
-import com.gachi_janchi.dto.UpdateReviewRequest;
-import com.gachi_janchi.dto.UpdateReviewResponse;
-import com.gachi_janchi.dto.UserInfoWithProfileImageAndTitle;
 import com.gachi_janchi.entity.Review;
 import com.gachi_janchi.entity.ReviewImage;
 import com.gachi_janchi.entity.ReviewMenu;
 import com.gachi_janchi.entity.User;
-import com.gachi_janchi.repository.ReviewImageRepository;
-import com.gachi_janchi.repository.ReviewMenuRepository;
-import com.gachi_janchi.repository.ReviewRepository;
-import com.gachi_janchi.repository.UserRepository;
+import com.gachi_janchi.exception.CustomException;
+import com.gachi_janchi.exception.ErrorCode;
 import com.gachi_janchi.util.JwtProvider;
 import java.nio.file.Files;
 
@@ -60,6 +54,9 @@ public class ReviewService {
 
   @Value("${REVIEW_IMAGE_PATH}")
   private String reviewImageRelativePath;
+
+  @Autowired
+  private ApplicationEventPublisher applicationEventPublisher;
 
   // 리뷰 저장
   @Transactional
@@ -109,8 +106,8 @@ public class ReviewService {
         for (String menuName : addReviewRequest.getMenuNames()) {
           ReviewMenu reviewMenu = new ReviewMenu(
             UUID.randomUUID().toString(),
-            reviewId,
-            menuName
+            menuName,
+            review
           );
           reviewMenuRepository.save(reviewMenu);
         }
@@ -120,18 +117,17 @@ public class ReviewService {
       for (String imageName : savedFileNames) {
         ReviewImage reviewImage = new ReviewImage(
           UUID.randomUUID().toString(),
-          reviewId,
-          imageName
+          imageName,
+          review
         );
         reviewImageRepository.save(reviewImage);
       }
 
       // 리뷰 작성 경험치 획득
-      if (type.equals("image")) { // 이미지가 포함된 리뷰일 경우
-        userService.gainExp(userId, 40);
-      } else { // 이미지가 포함되지 않은 리뷰일 경우
-        userService.gainExp(userId, 30);
-      }
+      userService.gainExp(userId, type.equals("image") ? 40 : 30);
+
+      // 리뷰 통계 비동기 갱신 이벤트 발행
+      applicationEventPublisher.publishEvent(new ReviewUpdateEvent(addReviewRequest.getRestaurantId()));
 
       return new AddReviewResponse("리뷰가 정상적으로 저장되었습니다.");
     } catch (Exception e) {
@@ -143,65 +139,33 @@ public class ReviewService {
           }
         }
       }
-      throw new RuntimeException("리뷰 저장 중 오류 발생: " + e.getMessage(), e);
+      // throw new RuntimeException("리뷰 저장 중 오류 발생: " + e.getMessage(), e);
+      throw new CustomException(ErrorCode.REVIEW_STORAGE_ERROR, "리뷰 저장 중 오류가 발생했습니다. - " + e.getMessage());
     }
   }
 
   // 음식점 ID로 리뷰 가져오기
-  public GetReviewByRestaurantIdResponse getReviewByRestaurant(String restaurantId, String sortType, boolean onlyImage) {
-    // 음식점에 대한 리뷰 다 가져오기
-    List<Review> reviewList = new ArrayList<>();
+  public GetReviewByRestaurantIdResponse getReviewByRestaurant(String restaurantId, String sortType, boolean onlyImage, int page, int size) {
 
-    // if (sortType.equals("latest")) { // 최신순
-      
-    // } else if (sortType.equals("earliest")) { // 오래된 순
-      
-    // } else if (sortType.equals("highRating")) { // 높은 별점 순
-      
-    // } else if (sortType.equals("lowRating")) { // 낮은 별점 순
-      
-    // }
+    long start = System.currentTimeMillis();
 
-    switch (sortType) {
-      case "latest": // 최신순
-        reviewList = reviewRepository.findAllByRestaurantIdOrderByCreatedAtDesc(restaurantId);
-        break;
-      case "earliest": // 오래된 순
-        reviewList = reviewRepository.findAllByRestaurantIdOrderByCreatedAtAsc(restaurantId);
-        break;
-      case "highRating": // 높은 별점 순
-        reviewList = reviewRepository.findAllByRestaurantIdOrderByRatingDesc(restaurantId);
-        break;
-      case "lowRating": // 낮은 별점 순
-        reviewList = reviewRepository.findAllByRestaurantIdOrderByRatingAsc(restaurantId);
-        break;
-      default: // 잘못된 값
-        break;
-    }
+    Pageable pageable = PageRequest.of(page, size);
 
-    List<ReviewWithImageAndMenu> reviewWithImageAndMenus = reviewList.stream()
-      .map(review -> {
-        List<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(review.getId());
-        if (onlyImage && reviewImages.isEmpty()) // 이미지 없는 리뷰 제외
-          return null; 
-        List<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(review.getId());
-        User user = userRepository.findById(review.getUserId()).orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다. - " + review.getUserId()));
-        String titleName = (user.getTitle() != null)
-          ? user.getTitle().getName()
-          : null;
-        return new ReviewWithImageAndMenu(
-          new UserInfoWithProfileImageAndTitle(
-            user.getId(), titleName, user.getProfileImage()
-          ),
-          review,
-          reviewImages,
-          reviewMenus
-        );
-      })
-      .filter(Objects::nonNull) // null 필터링
-      .collect(Collectors.toList());
+    Page<ReviewWithWriterDto> dtoPage = reviewRepository.searchByRestaurantId(restaurantId, pageable, onlyImage, sortType);
 
-    return new GetReviewByRestaurantIdResponse(reviewWithImageAndMenus);
+    List<ReviewWithImageAndMenu> result = dtoPage.getContent().stream()
+      .map(dto -> new ReviewWithImageAndMenu(
+        new UserInfoWithProfileImageAndTitle(dto.getUserId(), dto.getNickName(), dto.getTitle(), dto.getProfileImage()),
+        new Review(dto.getReviewId(), dto.getUserId(), null, restaurantId, dto.getRating(), dto.getContent(), dto.getType(), dto.getCreateAt()),
+        dto.getImageNames().stream().map(img -> new ReviewImage(null, img, null)).collect(Collectors.toSet()),
+        dto.getMenuNames().stream().map(menu -> new ReviewMenu(null, menu, null)).collect(Collectors.toSet())
+      ))
+      .toList();
+
+    long end = System.currentTimeMillis();
+    System.out.println("getReviewByRestaurant 실행 시간: " + (end - start) + "ms");
+
+    return new GetReviewByRestaurantIdResponse(result, dtoPage.isLast());
   }
 
   // 사용자 Id로 리뷰 가져오기
@@ -219,13 +183,15 @@ public class ReviewService {
 
     List<ReviewWithImageAndMenu> reviewWithImageAndMenus = reviewList.stream()
       .map(review -> {
-        List<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(review.getId());
-        List<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(review.getId());
-        User user = userRepository.findById(review.getUserId()).orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다. - " + review.getUserId()));
+        Set<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(review.getId());
+        Set<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(review.getId());
+        User user = userRepository.findById(review.getUserId())
+          // .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다. - " + review.getUserId()));
+          .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
         String titleName = (user.getTitle() != null) ? user.getTitle().getName() : null;
         return new ReviewWithImageAndMenu(
           new UserInfoWithProfileImageAndTitle(
-            user.getId(), titleName, user.getProfileImage()
+            user.getId(), user.getNickName(), titleName, user.getProfileImage()
           ),
           review,
           reviewImages,
@@ -247,23 +213,25 @@ public class ReviewService {
     String reviewId = deleteReviewRequest.getReviewId();
 
     // 리뷰 존재 여부 확인
-    Review review = reviewRepository.findById(reviewId).orElseThrow(() -> new IllegalArgumentException("리뷰를 찾을 수 없습니다. - " + reviewId ));
+    Review review = reviewRepository.findById(reviewId)
+      // .orElseThrow(() -> new IllegalArgumentException("리뷰를 찾을 수 없습니다. - " + reviewId ));
+      .orElseThrow(() -> new CustomException(ErrorCode.REVIEW_NOT_FOUND));
 
     // 리뷰 이미지 조회 및 파일 삭제
-    List<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(reviewId);
+    Set<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(reviewId);
     for (ReviewImage reviewImage : reviewImages) {
       String imagePath = reviewImageRelativePath + reviewImage.getImageName();
       File imageFile = new File(imagePath);
       if (imageFile.exists()) {
         boolean deleted = imageFile.delete();
         if (!deleted) {
-          System.out.println("이미지 삭제 실패 - " + imagePath);
+          throw new CustomException(ErrorCode.FILE_DELETE_ERROR);
         }
       }
     }
 
     // 리뷰 메뉴 DB 삭제
-    List<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(reviewId);
+    Set<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(reviewId);
     reviewMenuRepository.deleteAll(reviewMenus);
 
     // 리뷰 이미지 DB 삭제
@@ -273,11 +241,10 @@ public class ReviewService {
     reviewRepository.delete(review);
 
     // 리뷰 작성 경험치 차감
-    if (review.getType().equals("image")) { // 이미지가 포함된 리뷰일 경우
-      userService.gainExp(userId, -40);
-    } else { // 이미지가 포함되지 않은 리뷰일 경우
-      userService.gainExp(userId, -30);
-    }
+    userService.gainExp(userId, review.getType().equals("image") ? -40 : -30);
+
+    // 리뷰 통계 비동기 갱신 이벤트 발행
+    applicationEventPublisher.publishEvent(new ReviewUpdateEvent(review.getRestaurantId()));
 
     return new DeleteReviewResponse("Delete Review Successful");
   }
@@ -288,7 +255,9 @@ public class ReviewService {
     String accessToken = jwtProvider.getTokenWithoutBearer(token);
     String userId = jwtProvider.getUserId(accessToken);
 
-    Review review = reviewRepository.findById(updateReviewRequest.getReviewId()).orElseThrow(() -> new IllegalArgumentException("리뷰를 찾을 수 없습니다."));
+    Review review = reviewRepository.findById(updateReviewRequest.getReviewId())
+      // .orElseThrow(() -> new IllegalArgumentException("리뷰를 찾을 수 없습니다."));
+      .orElseThrow(() -> new CustomException(ErrorCode.REVIEW_NOT_FOUND));
 
     String originalType = review.getType();
     String changeType = "";
@@ -320,7 +289,7 @@ public class ReviewService {
       // 기존 이미지 파일 삭제
       if (updateReviewRequest.getRemoveOriginalImageNames() != null) {
         // 리뷰 이미지 조회 및 파일 삭제
-        List<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(updateReviewRequest.getReviewId());
+        Set<ReviewImage> reviewImages = reviewImageRepository.findAllByReviewId(updateReviewRequest.getReviewId());
 
         // 저장되어 있는 사진 이름
         List<String> savedImageNames = reviewImages.stream()
@@ -345,6 +314,7 @@ public class ReviewService {
               boolean deleted = imageFile.delete();
               if (!deleted) {
                 System.out.println("이미지 삭제 실패 - " + imagePath);
+
               }
               removedFiles.add(imageFile);
               backFiles.add(backUpFile);
@@ -355,7 +325,7 @@ public class ReviewService {
 
       // 메뉴 변경 (삭제 후 재등록)
       if (updateReviewRequest.getChangeMenus() != null) {
-        List<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(updateReviewRequest.getReviewId());
+        Set<ReviewMenu> reviewMenus = reviewMenuRepository.findAllByReviewId(updateReviewRequest.getReviewId());
 
         // 저장되어 있는 메뉴 이름
         List<String> savedMenuNames = reviewMenus.stream()
@@ -383,8 +353,8 @@ public class ReviewService {
           for (String menuName : saveMenuNames) {
             ReviewMenu reviewMenu = new ReviewMenu(
               UUID.randomUUID().toString(),
-              updateReviewRequest.getReviewId(),
-              menuName
+              menuName,
+              review
             );
             reviewMenuRepository.save(reviewMenu);
           }
@@ -413,8 +383,8 @@ public class ReviewService {
         for (String imageName : savedFileNames) {
           ReviewImage reviewImage = new ReviewImage(
             UUID.randomUUID().toString(),
-            updateReviewRequest.getReviewId(),
-            imageName
+            imageName,
+            review
           );
           reviewImageRepository.save(reviewImage);
         }
@@ -454,6 +424,9 @@ public class ReviewService {
         }
       }
 
+      // 리뷰 통계 비동기 갱신 이벤트 발행
+      applicationEventPublisher.publishEvent(new ReviewUpdateEvent(review.getRestaurantId()));
+
       return new UpdateReviewResponse("리뷰가 정상적으로 수정되었습니다.");
 
     } catch(Exception e) {
@@ -473,7 +446,7 @@ public class ReviewService {
 
           try {
               Files.copy(backup.toPath(), deleted.toPath(), StandardCopyOption.REPLACE_EXISTING);
-              // backup.delete(); // 백업 파일은 복원 후 삭제
+              backup.delete(); // 백업 파일은 복원 후 삭제
           } catch (IOException ioException) {
               System.out.println("백업 이미지 복원 실패 - " + deleted.getName());
               ioException.printStackTrace();
@@ -481,7 +454,29 @@ public class ReviewService {
         }
       }
       
-      throw new RuntimeException("리뷰 저장 중 오류 발생: " + e.getMessage(), e);
+      // throw new RuntimeException("리뷰 저장 중 오류 발생: " + e.getMessage(), e);
+      throw new CustomException(ErrorCode.REVIEW_UPDATE_ERROR, "리뷰 수정 중 오류가 발생했습니다. - " + e.getMessage());
     }
+  }
+
+  public ReviewRatingStatusResponse getReviewRatingStatus(String restaurantId) {
+    long start = System.currentTimeMillis();
+
+    ReviewRatingStatusResponse reviewRatingStatusResponse = reviewRepository.getRatingStatusByRestaurantId(restaurantId);
+
+    long end = System.currentTimeMillis();
+    System.out.println("getReviewByRestaurant 실행 시간: " + (end - start) + "ms");
+
+    return reviewRatingStatusResponse;
+  }
+
+  private Sort getSortBySortType(String sortType) {
+    return switch (sortType) {
+      case "latest" -> Sort.by(Sort.Direction.DESC, "createdAt");
+      case "earliest" -> Sort.by(Sort.Direction.ASC, "createdAt");
+      case "highRating" -> Sort.by(Sort.Direction.DESC, "rating");
+      case "lowRating" -> Sort.by(Sort.Direction.ASC, "rating");
+      default -> throw new CustomException(ErrorCode.INVALID_SORT_TYPE);
+    };
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:gachi_janchi/utils/secure_storage.dart';
@@ -21,8 +23,9 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
 
   List<dynamic> reviews = [];
   List<dynamic> showReviews = [];
-  List<int> ratings = [];
-  Map<int, int> ratingCounts = {
+  Map<dynamic, dynamic> ratingStatus = {
+    "avg": 0.0,
+    "totalCount": 0,
     1: 0,
     2: 0,
     3: 0,
@@ -30,6 +33,9 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
     5: 0
   };
   bool isOnlyImage = false;
+  int currentPage = 0;
+  int pageSize = 10;
+  bool hasMore = true;
 
   final TextEditingController reviewTypeController = TextEditingController();
   List<String> reviewSortTypeList = ["최신순", "오래된 순", "높은 별점 순", "낮은 별점 순"];
@@ -41,19 +47,113 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
   };
   String selectedReviewSortType = "최신순";
 
+  ScrollController scrollController = ScrollController();
+  bool isLoading = false;
+
   @override
   void initState() {
     super.initState();
-    ServerRequest().serverRequest(({bool isFinalRequest = false}) => getReview(widget.data["restaurantId"], "latest", isOnlyImage, isFinalRequest: isFinalRequest), context);
-    // getReview(widget.data["restaurantId"], "latest", isOnlyImage);
+    ServerRequest().serverRequest(({bool isFinalRequest = false}) => fetchReviewRatingStatus(widget.data["restaurantId"]), context);
+    fetchReviews();
     reviewTypeController.text = selectedReviewSortType;
+    scrollController.addListener(scrollListener);
   }
-  
-  Future<bool> getReview(String restaurantId, String sortType, bool onlyImage, {bool isFinalRequest = false}) async {
+
+  void scrollListener() {
+    if (scrollController.position.pixels >= scrollController.position.maxScrollExtent - 100 && !isLoading && hasMore) {
+      fetchReviews();
+    }
+  }
+
+  Future<bool> fetchReviewRatingStatus(String restaurantId, {bool isFinalRequest = false}) async {
     String? accessToken = await SecureStorage.getAccessToken();
 
     // .env에서 서버 URL 가져오기
-    final apiAddress = Uri.parse("${dotenv.get("API_ADDRESS")}/api/review/restaurantId?restaurantId=$restaurantId&sortType=$sortType&onlyImage=$onlyImage");
+    final apiAddress = Uri.parse("${dotenv.get("API_ADDRESS")}/api/review/ratingStatus?restaurantId=$restaurantId");
+    final headers = {
+      'Authorization': 'Bearer ${accessToken}',
+      'Content-Type': 'application/json'
+    };
+
+    try {
+      final response = await http.get(
+        apiAddress,
+        headers: headers
+      );
+
+      if (response.statusCode == 200) {
+        // UTF-8로 디코딩
+        final decodedData = utf8.decode(response.bodyBytes);
+        final data = json.decode(decodedData);
+
+        log("API 응답 데이터: ${data}");
+        
+        int sumForAvg = 0;
+
+        for (int i = 1; i <= 5; i++) {
+          final key = 'rating_$i';
+          if (data.containsKey(key)) {
+            int count = data[key] ?? 0;
+
+            ratingStatus[i] = count;
+            ratingStatus["totalCount"] += count;
+            sumForAvg += i * count;
+          } 
+        }
+
+        if (ratingStatus["totalCount"] > 0) {
+          ratingStatus["avg"] = double.parse(
+            (sumForAvg / ratingStatus["totalCount"]).toStringAsFixed(1)
+          );
+        }
+
+        print("ratingStatus: $ratingStatus");
+
+        return true;
+      } else {
+        log("ratingStatus 가져오기 실패");
+        return false;
+      }
+    } catch (e) {
+      if (isFinalRequest) {
+        // 예외 처리
+        print("네트워크 오류: ${e.toString()}");
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("네트워크 오류: ${e.toString()}")));
+      }
+      return false;
+    }
+  }
+
+  Future<void> fetchReviews() async {
+    log("시작");
+    if (isLoading) return;
+    isLoading = true;
+
+    final success = await ServerRequest().serverRequest(({bool isFinalRequest = false}) => getReview(widget.data["restaurantId"], sortTypeMap[selectedReviewSortType]!, isOnlyImage, isFinalRequest: isFinalRequest), context);
+
+    isLoading = false;
+    log("끝");
+  }
+
+  void resetAndFetchReviews() {
+    setState(() {
+      currentPage = 0;
+      hasMore = true;
+      reviews.clear();
+      showReviews.clear();
+    });
+
+    fetchReviews();
+  }
+  
+  Future<bool> getReview(String restaurantId, String sortType, bool onlyImage, {bool isFinalRequest = false}) async {
+    if (!hasMore) return false;
+
+    String? accessToken = await SecureStorage.getAccessToken();
+
+    // .env에서 서버 URL 가져오기
+    final apiAddress = Uri.parse("${dotenv.get("API_ADDRESS")}/api/review/restaurantId?restaurantId=$restaurantId&sortType=$sortType&onlyImage=$onlyImage&page=$currentPage&size=$pageSize");
     final headers = {
       'Authorization': 'Bearer ${accessToken}',
       'Content-Type': 'application/json'
@@ -72,25 +172,16 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
         final decodedData = utf8.decode(response.bodyBytes);
         final data = json.decode(decodedData);
 
-        print("API 응답 데이터: ${data}");
+        log("API 응답 데이터: ${data}");
+
+        List<dynamic> newReviews = data["reviews"];
 
         setState(() {
-          reviews = data["reviews"];
+          reviews.addAll(newReviews);
           showReviews = reviews;
-          
-          // 값 초기화
-          ratings = [];
-          ratingCounts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
-
-          for (var review in reviews) {
-            int? rating = review["review"]["rating"];
-            if (rating != null) {
-              ratings.add(rating);
-              ratingCounts[rating] = ratingCounts[rating]! + 1;
-            }
-          }
+          currentPage++;
+          hasMore = !data["last"];
         });
-        // showReviewTypeToggle();
 
         print("리뷰 리스트 요청 성공");
         return true;
@@ -119,33 +210,15 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
     }
   }
 
-  // 사진 리뷰 필터링 함수
-  // Future<void> showReviewTypeToggle() async {
-  //   if (isOnlyImage) {
-  //     setState(() {
-  //       showReviews = reviews.where((review) {
-  //         bool isImageReview = review["review"]["type"] == "image";
-
-  //         return isImageReview;
-  //       }).toList();
-  //     });
-  //   } else {
-  //     setState(() {
-  //       showReviews = reviews;
-  //     });
-  //   }
-  // }
-
   Widget buildRatingDistribution() {
-    int total = ratings.length;
     return Padding(
       padding: const EdgeInsets.all(10.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: List.generate(5, (index) {
           int star = 5 - index;
-          int count = ratingCounts[star] ?? 0;
-          double ratio = total > 0 ? count / total : 0;
+          int count = ratingStatus[star] ?? 0;
+          double ratio = ratingStatus["totalCount"] > 0 ? count / ratingStatus["totalCount"] : 0;
       
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 2),
@@ -189,6 +262,7 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
   @override
   Widget build(BuildContext context) {
     return CustomScrollView(
+      controller: scrollController,
       slivers: [
         SliverToBoxAdapter(
           child: Column(
@@ -218,7 +292,7 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
                                 size: 40,
                               ),
                               Text( // 평균값
-                                calculateAvgStarRating(ratings),
+                                ratingStatus["avg"].toString(),
                                 style: TextStyle(
                                   fontSize: 25,
                                   fontWeight: FontWeight.bold
@@ -228,7 +302,7 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
                           ),
                           SizedBox(height: 5),
                           Text( // 총 리뷰 수
-                            "${ratings.length.toString()}개의 평점",
+                            "${ratingStatus["totalCount"].toString()}개의 평점",
                             style: TextStyle(
                               color: Colors.grey[800]
                             ),
@@ -261,9 +335,8 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
                         setState(() {
                           isOnlyImage = !isOnlyImage;
                         });
-                        // showReviewTypeToggle();
-                        ServerRequest().serverRequest(({bool isFinalRequest = false}) => getReview(widget.data["restaurantId"], sortTypeMap[selectedReviewSortType]!, isOnlyImage, isFinalRequest: isFinalRequest), context);
-                        // getReview(widget.data["restaurantId"], sortTypeMap[selectedReviewSortType]!, isOnlyImage);
+                        // ServerRequest().serverRequest(({bool isFinalRequest = false}) => getReview(widget.data["restaurantId"], sortTypeMap[selectedReviewSortType]!, isOnlyImage, isFinalRequest: isFinalRequest), context);
+                        resetAndFetchReviews();
                         print("사진 리뷰만 보기 버튼 클릭!!!!");
                         print("isOnlyImage: $isOnlyImage");
                       },
@@ -278,7 +351,6 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
                         backgroundColor: isOnlyImage
                           ? const Color.fromRGBO(122, 11, 11, 1)
                           : Colors.white,
-                        // backgroundColor: const Color.fromRGBO(122, 11, 11, 1),
                         overlayColor: const Color.fromARGB(116, 122, 11, 11),
                       ),
                       icon: Icon(
@@ -311,8 +383,8 @@ class _RestaurantDetailReviewScreenState extends State<RestaurantDetailReviewScr
                           setState(() {
                             selectedReviewSortType = value;
                           });
-                          ServerRequest().serverRequest(({bool isFinalRequest = false}) => getReview(widget.data["restaurantId"], sortTypeMap["$value"]!, isOnlyImage, isFinalRequest: isFinalRequest), context);
-                          // getReview(widget.data["restaurantId"], sortTypeMap["$value"]!, isOnlyImage);
+                          // ServerRequest().serverRequest(({bool isFinalRequest = false}) => getReview(widget.data["restaurantId"], sortTypeMap["$value"]!, isOnlyImage, isFinalRequest: isFinalRequest), context);
+                          resetAndFetchReviews();
                         }
                       },
                       inputDecorationTheme: const InputDecorationTheme(
